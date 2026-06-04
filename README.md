@@ -1,1 +1,1 @@
-"# Documentation Q&A System"  
+# Documentation Q&A System

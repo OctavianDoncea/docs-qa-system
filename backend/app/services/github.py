@@ -26,17 +26,18 @@ def _is_doc_file(path: str) -> bool:
     if any(lower.startswith(p) for p in SKIP_PREFIXES):
         return False
     
-    return lower.endswith(SUPPORTED_EXTENSIONS)
+    return lower.endswith(tuple(SUPPORTED_EXTENSIONS))
 
 async def fetch_repo_docs(url: str) -> list[dict[str, str]]:
     """Fetch documentation files from a public GitHub repository."""
     owner, repo = parse_github_url(url)
 
-    headers = {'Accept': 'application/vnd.github_json', 'X-GitHub-Api-Version': '2022-11-28'}
-    if settings.github_token:
-        headers['Authorization'] = f'Bearer {settings.github_token}'
+    headers = {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
+    token = settings.github_token.strip()
+    if token and token != 'your_github_token':
+        headers['Authorization'] = f'Bearer {token}'
 
-    async with httpx.AsyncClient(headers=headers, timeout=30.0) as client:
+    async with httpx.AsyncClient(headers=headers, timeout=30.0, follow_redirects=True) as client:
         # 1. fetch the full recursive file tree
         tree_url = f'https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1'
         resp = await client.get(tree_url)

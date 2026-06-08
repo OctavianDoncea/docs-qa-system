@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine
-from app.routers import repos
+from app.routers import repos, query
 from app.services import embedding as embedding_service
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
@@ -20,6 +20,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title='Docs Q&A API', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173', 'http://localhost:3000'], allow_methods=['*'], allow_headers=['*'])
 app.include_router(repos.router)
+app.include_router(query.router)
 
 @app.get('/health')
 async def health():

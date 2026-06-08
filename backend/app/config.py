@@ -1,18 +1,22 @@
 from functools import lru_cache
-from pydantic_settings import BaseSettings
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ENV_FILE = ROOT_DIR / '.env'
 
 class Settings(BaseSettings):
     database_url: str
-    ollama_url: str
+    ollama_url: str = 'http://localhost:11434'
     embedding_model: str
     groq_api_key: str
     llm_model: str
     chunk_size: int
     chunk_overlap: int
     top_k: int
-    github_token: str
+    github_token: str = ''
 
-    model_config = {'env_file': '.env', 'env_file_encoding': 'utf-8'}
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding='utf-8', extra='ignore')
 
 @lru_cache
 def get_settings() -> Settings:

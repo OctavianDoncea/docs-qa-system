@@ -7,7 +7,7 @@ from app.database import Base
 class Repo(Base):
     __tablename__ = "repos"
 
-    id: Mapped[int] = mapped_column(Integer, primary_ket=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

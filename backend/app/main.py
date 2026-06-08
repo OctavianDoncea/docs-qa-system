@@ -1,4 +1,3 @@
-from errno import EBADE
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI

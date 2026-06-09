@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     database_url: str
     ollama_url: str = 'http://localhost:11434'
     embedding_model: str
-    groq_api_key: str
+    groq_api_key: str = ''
+    groq_llm_model: str = 'llama-3.1-8b-instant'
     llm_model: str
     chunk_size: int
     chunk_overlap: int

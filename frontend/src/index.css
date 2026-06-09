@@ -1,0 +1,536 @@
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --bg: #f0f2f5;
+    --surface: #ffffff;
+    --border: #d4d8e0;
+    --text: #161616;
+    --text-muted: #6f7782;
+    --accent: #0f62fe;
+    --accent-h: #0353e9;
+    --user-bg: #161616;
+    --userf-fg: #ffffff;
+    --error-bg: #fff1f1;
+    --error-fg: #da1e28;
+    --error-br: #ffc1c7;
+    --info-bg: #edf5ff;
+    --info-fg: #0043ce;
+    --info-br: #bee3f8;
+    --score-bg: #edf5ff;
+    --score-fg: #0043ce;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    --r: 12px;
+    --r-sm: 8px;
+}
+
+/* Base */
+html, body, #root {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoie UI', system-ui, sans-serif;
+    font-size: 15px;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* App shell */
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-width: 860px;
+    margin: 0 auto;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+}
+
+/* Header */
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 20px;
+    height: 48px;
+    background: var(--text);
+    color: #ffffff;
+    flex-shrink: 0;
+}
+
+.app-logo {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.active-repo {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: #a8b3c4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Repo bar */
+.repo-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.repo-form {
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+
+.repo-input {
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    padding: 0 12px;
+    font-family: var(--mono);
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.repo-input::placeholder {
+    color: var(--text-muted);
+}
+
+.repo-input:focus {
+    border-color: var(--accent);
+}
+
+.repo-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-ingest {
+    height: 36px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 500;
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s;
+    flex-shrink: 0;
+}
+
+.btn-ingest:hover:not(:disabled) {
+    background: var(--accent-h);
+}
+
+.btn-ingest:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.repo-select-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.repo-select-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.repo-select {
+    height: 36px;
+    padding: 0 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    outline: none;
+    max-width: 220px;
+}
+
+/* Status banner */
+.status-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
+.status-info {
+    background: var(--info-bg);
+    border-bottom: 1px solid var(--info-br);
+    color: var(--info-fg);
+}
+
+.status-error {
+    background: var(--error-bg);
+    border-bottom: 1px solid var(--error-br);
+    color: var(--error-fg);
+    justify-content: space-between;
+}
+
+.status-error button {
+    background: none;
+    border: none;
+    font-size: 16px;
+    color: var(--error-fg);
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 2px;
+    flex-shrink: 0;
+}
+
+/* Chat */
+.chat {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.message-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.message-list::-webkit-scrollbar {
+    width: 5px;
+}
+
+.message-list::-webkit-scrollbar-track {
+    background: transparent
+}
+
+.message-list::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 10px;
+}
+
+/* Empty state */
+.empty-state {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+    margin: auto;
+    padding: 40px 20px;
+    line-height: 1.7;
+}
+
+.empty-state strong {
+    display: block;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+}
+
+/* Message */
+.message {
+    display: flex;
+    max-width: 78%;
+}
+
+.message-user {
+    align-self: flex-end;
+}
+
+.message-assistant {
+    align-self: flex-start;
+}
+
+.bubble {
+    padding: 11px 15px;
+    border-radius: var(--r);
+    font-size: 14px;
+    line-height: 1.65;
+}
+
+.bubble-user {
+    background: var(--user-bg);
+    color: var(--userf-fg);
+    border-bottom-right-radius: 4px;
+}
+
+.bubble-assistant {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.bubble-error {
+    background: var(--error-bg);
+    color: var(--error-fg);
+    border: 1px solid var(--error-br);
+    font-size: 13px;
+    border-bottom-left-radius: 4px;
+}
+
+/* Source section */
+.sources {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.sources-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+
+.source-toggle:hover {
+    color: var(--text);
+}
+
+.toggle-arrow {
+    font-size: 10px;
+}
+
+.sources-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Source card */
+.source-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 10px 12px;
+}
+
+.source-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 7px;
+}
+
+.source-index {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.source-path {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.source-score {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--score-bg);
+    color: var(--score-fg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.source-content {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.source-content.collapsed {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.source-expand {
+    margin-top: 5px;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.source-expand:hover {
+    color: var(--text);
+}
+
+/* Typing indicator */
+.typing-indicator {
+    display: flex;
+    gap: 5px;
+    align-items: flex-start;
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    border-bottom-left-radius: 4px;
+}
+
+.typing-indicator span {
+    display: block;
+    width: 7px;
+    height: 7px;
+    background: var(--border);
+    border-radius: 50%;
+    animation: bounce 1.2s infinite ease-in-out;
+}
+
+.typing-indicator span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes bounce {
+    0%, 60%, 100% {
+        transform: translateY(0);
+        background: var(--border);
+    }
+    30% {
+        transform: translateY(-6px);
+        background: var(--text-muted);
+    }
+}
+
+/* Input bar */
+.chat-form {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.chat-input-failed {
+    flex: 1;
+    height: 40px;
+    padding: 0 14px;
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.chat-input-failed::placeholder {
+    color: var(--text-muted);
+}
+
+.chat-input-failed:focus {
+    border-color: var(--accent);
+}
+
+.chat-input-failed:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-send {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: var(--r);
+    background: var(--accent);
+    color: #ffffff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+
+.btn-send:hover:not(:disabled) {
+    background: var(--accent-h);
+}
+
+.btn-send:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Spinner */
+.spinner {
+    width: 13px;
+    height: 13px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: spin 0.65s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .spinner, .typing-indicator span {
+        animation: none;
+    }
+}

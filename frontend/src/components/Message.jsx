@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import SourceCard from './SourceCard'
+import ReactMarkdown from 'react-markdown'
 
 export default function Message({ message }) {
     const [sourcesOpen, setSourcesOpen] = useState(false)
@@ -25,11 +26,15 @@ export default function Message({ message }) {
     return (
         <div className='message message-assistant'>
             <div className='bubble bubble-assistant'>
-                <div className='answer-text'>{message.content}</div>
+                <div className='answer-text'><ReactMarkdown>{message.content}</ReactMarkdown></div>
                 {hasSources && (
                     <div className='sources'>
                         <button className='sources-toggle' onClick={() => setSourcesOpen(e => !e)}>
-                            <span className='toggle-arrow'>{sourceOpen ? '▾' : '▸'}</span>
+                            <svg width='10' height='10' viewBox='0 0 10 10' fill='currentColor'
+                                style={{ transform: sourcesOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}
+                            >
+                                <polygon points='2,1 8,5 2,9' />
+                            </svg>
                             {message.sources.length} source{message.sources.length !== 1 ? 's' : ''}
                         </button>
                         {sourcesOpen && (

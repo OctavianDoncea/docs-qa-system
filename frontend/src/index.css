@@ -243,6 +243,37 @@ html, body, #root {
     border-radius: 10px;
 }
 
+/* Markdown content */
+.answer-text p { margin-bottom: 0.75em; }
+.answer-text p:last-child { margin-bottom: 0; }
+.answer-text ol, .answer-text ul { padding-left: 20px; margin: 6px 0; }
+.answer-text li { margin: 3px 0; }
+
+.answer-text code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.answer-text pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 12px 14px;
+    overflow-x: auto;
+    margin: 8px 0;
+}
+
+.answer-text pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+}
+
 /* Empty state */
 .empty-state {
     text-align: center;

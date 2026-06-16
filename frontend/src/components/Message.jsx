@@ -21,12 +21,17 @@ export default function Message({ message }) {
         )
     }
 
-    const hasSources = message.sources?.length > 0
+    const isStreaming = message.streaming === true
+    const hasSources = !isStreaming && (message.sources?.length ?? 0) > 0
 
     return (
         <div className='message message-assistant'>
             <div className='bubble bubble-assistant'>
-                <div className='answer-text'><ReactMarkdown>{message.content}</ReactMarkdown></div>
+                <div className='answer-text'>
+                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                    {isStreaming && <span className='stream-cursor' aria-hidden='true'></span>}
+                </div>
+                
                 {hasSources && (
                     <div className='sources'>
                         <button className='sources-toggle' onClick={() => setSourcesOpen(e => !e)}>

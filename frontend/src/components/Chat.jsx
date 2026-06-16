@@ -5,9 +5,12 @@ export default function Chat({ messages, isQuerying, hasRepo, onQuery }) {
     const [input, setInput] = useState('')
     const bottomRef = useRef(null)
 
+    const lastMsg = messages[messages.length - 1]
+    const isStreaming = isQuerying && lastMsg?.role === 'assistant'
+
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, [messages.length, isQuerying])
+    }, [messages.length, isQuerying, lastMsg?.content])
 
     const handleSubmit = (e) => {
         e.preventDefault()
@@ -16,9 +19,6 @@ export default function Chat({ messages, isQuerying, hasRepo, onQuery }) {
         onQuery(q)
         setInput('')
     }
-
-    const lastMsg = messages[messages.length - 1]
-    const isStreaming = lastMsg?.role === 'assistant' && lastMsg?.streaming === true
 
     return (
         <div className='chat'>

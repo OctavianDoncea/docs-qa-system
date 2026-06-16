@@ -17,6 +17,9 @@ export default function Chat({ messages, isQuerying, hasRepo, onQuery }) {
         setInput('')
     }
 
+    const lastMsg = messages[messages.length - 1]
+    const isStreaming = lastMsg?.role === 'assistant' && lastMsg?.streaming === true
+
     return (
         <div className='chat'>
             <div className='message-list'>
@@ -34,11 +37,13 @@ export default function Chat({ messages, isQuerying, hasRepo, onQuery }) {
                 {messages.map((msg, i) => (
                     <Message key={i} message={msg} />
                 ))}
-                {isQuerying && (
+
+                {isQuerying && !isStreaming && (
                     <div className='typing-indicator' aria-label='Thinking'>
                         <span /><span /><span />
                     </div>
                 )}
+
                 <div ref={bottomRef}></div>
             </div>
             <form className='chat-form' onSubmit={handleSubmit}>

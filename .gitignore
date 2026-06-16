@@ -1,5 +1,23 @@
-.venv/
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+**/*.pyc
+backend/.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Environment — never commit real secrets
 .env
-__pycache__/
-*.pyc
-.pytest_cache/
+backend/.env
+**/.env.local
+**/.env.*.local
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

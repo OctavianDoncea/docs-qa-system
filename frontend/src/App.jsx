@@ -12,17 +12,13 @@ export default function App() {
     const [error, setError] = useState(null)
 
     useEffect(() => {
-        api.getRepos()
-        .then(data => {
+        api.getRepos().then(data => {
             setRepos(data)
             if (data.length > 0) setActiveRepoId(data[0].id)
-        })
-        .catch(() => {
-
-        })
+        }).catch(() => {})
     }, [])
 
-    const handleIngest = async (url) => {
+    const handleDigest = async (url) => {
         setIsIngesting(true)
         setError(null)
         try {
@@ -39,14 +35,43 @@ export default function App() {
 
     const handleQuery = async (question) => {
         if (!activeRepoId || isQuerying) return
+
         setMessages(prev => [...prev, { role: 'user', content: question }])
         setIsQuerying(true)
+
+        let firstToken = true
+
         try {
-            const result = await api.queryRepo(question, activeRepoId)
-            setMessages(prev => [
-                ...prev,
-                { role: 'assistant', content: result.answer, sources: result.sources }
-            ])
+            for await (const event of api.streamQuery(question, activeRepoId)) {
+                if (event.error) {
+                    setMessages(prev => [...prev, { role: 'error', content: event.error }])
+                    break
+                }
+
+                if (!event.done && event.content) {
+                    if (firstToken) {
+                        firstToken = false
+                        setMessages(prev => [
+                            ...prev, { role: 'assistant', content: event.content, sources: [], streaming: true }
+                        ])
+                    } else {
+                        setMessages(prev => {
+                            const res = prev.slice(0, -1)
+                            const last = prev[prev.length - 1]
+                            return [...res, { ...last, content: last.content + event.content }]
+                        })
+                    }
+                }
+
+                if (event.done) {
+                    setMessages(prev => {
+                        const rest = prev.slice(0, -1)
+                        const last = prev[prev.length - 1]
+                        if (!last || last.role !== 'assistant') return prev
+                        return [...rest, { ...last, sources: event.sources ?? [], streaming: false }]
+                    })
+                }
+            }
         } catch (err) {
             setMessages(prev => [...prev, { role: 'error', content: err.message }])
         } finally {
@@ -65,19 +90,13 @@ export default function App() {
     return (
         <div className='app'>
             <header className='app-header'>
-                <span className='app-logo'>Docs Q&A</span>
+                <span className='app-logo'>docs-qa</span>
                 {activeRepo && (
                     <span className='active-repo'>{activeRepo.name} - {activeRepo.chunk_count} chunks</span>
                 )}
             </header>
 
-            <RepoForm 
-                repos={repos}
-                activeRepoId={activeRepoId}
-                isIngesting={isIngesting}
-                onIngest={handleIngest}
-                onRepoChange={handleRepoChange}
-            />
+            <RepoForm repos={repos} activeRepoId={activeRepoId} isIngesting={isIngesting} onIngest={handleDigest} onRepoChange={handleRepoChange} />
 
             {isIngesting && (
                 <div className='status-banner status-info'>
@@ -89,16 +108,11 @@ export default function App() {
             {error && !isIngesting && (
                 <div className='status-banner status-error'>
                     <span>{error}</span>
-                    <button onClick={() => setError(null)} aria-label='Dismiss error'>x</button>
+                    <button onClick={() => setError(null)} aria-label="Dismiss error">x</button>
                 </div>
             )}
 
-            <Chat 
-                messages={messages}
-                isQuerying={isQuerying}
-                hasRepo={!!activeRepo}
-                onQuery={handleQuery}
-            />
+            <Chat messages={messages} isQuerying={isQuerying} hasRepo={!!activeRepoId} onQuery={handleQuery} />
         </div>
     )
 }

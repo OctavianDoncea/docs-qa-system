@@ -62,7 +62,7 @@ async def fetch_repo_docs(url: str) -> list[dict[str, str]]:
         files: list[dict[str, str]] = []
         for item in doc_items:
             try:
-                blob_url = f'https://api.github.com/repos/{owner}/{repo}/git/blobs/{item['sha']}'
+                blob_url = f'https://api.github.com/repos/{owner}/{repo}/git/blobs/{item["sha"]}'
                 blob_resp = await client.get(blob_url)
                 blob_resp.raise_for_status()
 
@@ -72,7 +72,7 @@ async def fetch_repo_docs(url: str) -> list[dict[str, str]]:
 
                 if content.strip():
                     files.append({'path': item['path'], 'content': content})
-            except Exception as e:
+            except httpx.HTTPStatusError as e:
                 logger.warning(f"Skipping {item['path']} (HTTP {e.response.status_code})")
             except Exception as e:
                 logger.warning(f"Skipping {item['path']}: {e}")

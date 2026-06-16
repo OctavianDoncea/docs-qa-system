@@ -1,10 +1,11 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
+from app.models import Repo
 from app.services import retrieval
-from app.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/query', tags=['query'])
@@ -14,27 +15,20 @@ class QueryRequest(BaseModel):
     repo_id: int
 
 
-class SourceResponse(BaseModel):
-    index: int
-    file_path: str
-    content: str
-    score: float
+@router.post('', summary='Ask a question about an ingested repository', response_description='text/event-stream of SSE events. Each event: {content, done} or {content, done, sources} or {error, done}.')
+async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
+    """Streams the answer as Server-Sent Events."""
 
+    repo = await db.get(Repo, request.repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f'No repo found with id {request.repo_id}.')
 
-class QueryResponse(BaseModel):
-    answer: str
-    sources: list[SourceResponse]
+    async def generate():
+        async for chunk in retrieval.stream_query_repo(question=request.question, repo_id=request.repo_id, db=db):
+            yield chunk
 
-
-@router.post('', response_model=QueryResponse)
-async def query(request: QueryRequest, db: AsyncSession = Depends(get_db), _: None = Depends(require_api_key)):
-    try:
-        result = await retrieval.query_repo(question=request.question, repo_id = request.repo_id, db=db)
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        logger.exception('Query failed unexpectedly')
-        raise HTTPException(status_code=500, detail=f'Query failed: {e}')
+    return StreamingResponse(generate(), media_type='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+        'Connection': 'keep-alive',
+    })

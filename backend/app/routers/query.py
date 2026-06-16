@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from app.database import get_db
 from app.services import retrieval
+from app.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/query', tags=['query'])
@@ -26,7 +27,7 @@ class QueryResponse(BaseModel):
 
 
 @router.post('', response_model=QueryResponse)
-async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
+async def query(request: QueryRequest, db: AsyncSession = Depends(get_db), _: None = Depends(require_api_key)):
     try:
         result = await retrieval.query_repo(question=request.question, repo_id = request.repo_id, db=db)
         return result

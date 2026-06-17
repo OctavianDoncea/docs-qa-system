@@ -11,14 +11,10 @@ logger = logging.getLogger(__name__)
 
 _groq_client: AsyncGroq | None = None
 
-NOT_COVERED_MESSAGE = 'This information is not covered in the documentation.'
+MAX_HISTORY_TURNS = 3
+MAX_HISTORY_CHARS = 800
 
-SYSTEM_PROMPT = (
-    'You are a documentation assistant. Answer questions using ONLY the provided context. '
-    'For every fact you state, cite its source number in square brackets, for example [1] or [2]. '
-    'If the answer is not present in the context, respond with exactly: '
-    f'"{NOT_COVERED_MESSAGE}"'
-)
+NOT_COVERED_MESSAGE = 'This information is not covered in the documentation.'
 
 
 def _get_groq_client() -> AsyncGroq:
@@ -29,12 +25,57 @@ def _get_groq_client() -> AsyncGroq:
 
     return _groq_client
 
-
-def _chat_messages(question: str, context: str) -> list[dict[str, str]]:
-    return [
-        {'role': 'system', 'content': SYSTEM_PROMPT},
-        {'role': 'user', 'content': f'Context:\n\n{context}\n\nQuestion: {question}'},
+def _prepare_history(history: list[dict]) -> list[dict]:
+    cleaned = [
+        {'role': h['role'], 'content': h['content'][:MAX_HISTORY_CHARS]}
+        for h in history
+        if h.get('role') in ('user', 'assistant') and h.get('content')
     ]
+
+    return cleaned[-(MAX_HISTORY_TURNS * 2):]
+
+async def _condense_question(question: str, history: list[dict], model: str) -> str:
+    if not history:
+        return question
+
+    client = _get_groq_client()
+    convo = '\n'.join(f"{h['role'].capitalize()}: {h['content']}" for h in history)
+
+    prompt = (
+        f'Conversation so far:\n{convo}\n\n'
+        f'Follow-up question: {question}\n\n'
+        'Rewrite the follow-up question as a standalone question that includes all context needed to understand it without the conversations above. '
+        'Preserve technical terms, function names, and identifiers exactly as written. If the follow-up question is already standalone, return it unchanged. '
+        'Output only the rewritten question, no explanation, no quotes.'
+    )
+
+    try:
+        response = await client.chat.completions.create(model=model, messages=[{'role': 'user', 'content': prompt}], max_tokens=120, temperature=0)
+        condensed = response.choices[0].message.content.strip()
+        return condensed or question
+    except Exception as e:
+        logger.warning('Question condensing failed, using original question: %s', e)
+        return question
+
+def _build_messages_with_history(question: str, context: str, history: list[dict]) -> list[dict[str, str]]:
+    system_prompt = (
+        'You are a documentation assistant having an ongoing conversation with a user. '
+        'Use the conversation history ONLY to understand what the user is referring to '
+        '(e.g. resolving "it", "that", or implicit subjects from earlier turns). '
+        'Base every factual claim strictly on the Context section provided in the final message '
+        '– never on prior assistant answers, which may be incomplete. '
+        'For every fact you state, cite its source number in square brackets, for example [1] or [2]. '
+        f'If the answer is not present in the context, respond with exactly: "{NOT_COVERED_MESSAGE}"'
+    )
+
+    messages: list[dict[str, str]] = [{'role': 'system', 'content': system_prompt}]
+    for h in history:
+        messages.append({'role': h['role'], 'content': h['content']})
+    messages.append({
+        'role': 'user',
+        'content': f'Context:\n\n{context}\n\nQuestion: {question}',
+    })
+    return messages
 
 
 def _groq_api_key_configured() -> bool:
@@ -54,7 +95,7 @@ def _sources_payload(chunks: list[dict]) -> list[dict]:
     ]
 
 
-async def stream_query_repo(question: str, repo_id: int, db: AsyncSession):
+async def stream_query_repo(question: str, repo_id: int, db: AsyncSession, history: list[dict] | None = None):
     """
     Full RAG pipeline with hybrid retrieval, as an async generator.
     Yields SSE-formatted strings consumed by the /query StreamingResponse.
@@ -67,12 +108,16 @@ async def stream_query_repo(question: str, repo_id: int, db: AsyncSession):
     5. Yield a final event with the source list
     """
     settings = get_settings()
+    history = _prepare_history(history or [])
 
     try:
-        query_embedding = await embedding_service.encode_query(question)
-        chunks = await _hybrid_search(
-            query_embedding, question, repo_id, settings.top_k, db
-        )
+        search_question = await _condense_question(question, history, settings.llm_model)
+        was_rewritten = search_question.strip().lower() != question.strip().lower()
+        if was_rewritten:
+            logger.info(f'Condensed question: {question} -> {search_question}')
+        
+        query_embedding = await embedding_service.encode_query(search_question)
+        chunks = await _hybrid_search(query_embedding, search_question, repo_id, settings.top_k, db)
 
         if not chunks:
             yield 'data: ' + json.dumps({
@@ -85,16 +130,20 @@ async def stream_query_repo(question: str, repo_id: int, db: AsyncSession):
         context = '\n\n---\n\n'.join(
             f"[{i + 1}] (file: {c['file_path']})\n{c['content']}" for i, c in enumerate(chunks)
         )
-        messages = _chat_messages(question, context)
+        messages = _build_messages_with_history(question, context, history)
 
         async for content in _stream_llm(messages):
             yield 'data: ' + json.dumps({'content': content, 'done': False}) + '\n\n'
 
-        yield 'data: ' + json.dumps({
+        done_payload: dict = {
             'content': '',
             'done': True,
             'sources': _sources_payload(chunks),
-        }) + '\n\n'
+        }
+        if was_rewritten:
+            done_payload['search_query'] = search_question
+
+        yield 'data: ' + json.dumps(done_payload) + '\n\n'
 
     except Exception as e:
         logger.exception('Streaming query failed')

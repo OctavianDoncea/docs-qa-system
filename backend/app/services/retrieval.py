@@ -48,19 +48,31 @@ def _sources_payload(chunks: list[dict]) -> list[dict]:
             'index': i + 1,
             'file_path': c['file_path'],
             'content': c['content'],
-            'score': round(c['score'], 4),
+            'score': round(float(c['score']), 4),
         }
         for i, c in enumerate(chunks)
     ]
 
 
 async def stream_query_repo(question: str, repo_id: int, db: AsyncSession):
-    """Full RAG pipeline as an async generator. Yields SSE-formatted strings consumed by the query StreamingResponse."""
+    """
+    Full RAG pipeline with hybrid retrieval, as an async generator.
+    Yields SSE-formatted strings consumed by the /query StreamingResponse.
+
+    Steps:
+    1. Embed the question via Ollama (encode_query)
+    2. Hybrid search: vector + keyword, fused with RRF
+    3. Build a prompt with inline source references
+    4. Stream the LLM response token by token (Groq, with Ollama fallback)
+    5. Yield a final event with the source list
+    """
     settings = get_settings()
 
     try:
         query_embedding = await embedding_service.encode_query(question)
-        chunks = await _vector_search(query_embedding, repo_id, settings.top_k, db)
+        chunks = await _hybrid_search(
+            query_embedding, question, repo_id, settings.top_k, db
+        )
 
         if not chunks:
             yield 'data: ' + json.dumps({
@@ -153,20 +165,83 @@ async def _stream_ollama(messages: list[dict[str, str]], model: str):
             raise
 
 
-async def _vector_search(query_embedding: list[float], repo_id: int, top_k: int, db: AsyncSession) -> list[dict]:
-    """Find the top_k most similar chunks using pgvector cosine distance."""
+async def _hybrid_search(
+    query_embedding: list[float],
+    question: str,
+    repo_id: int,
+    top_k: int,
+    db: AsyncSession,
+) -> list[dict]:
+    """
+    Hybrid retrieval: pgvector cosine search + PostgreSQL full-text search,
+    fused with Reciprocal Rank Fusion (RRF).
+
+    score(d) = 1/(k + rank_vector(d)) + 1/(k + rank_keyword(d))   k = 60
+
+    Each branch retrieves candidate_limit results independently. A FULL OUTER
+    JOIN ensures chunks found by only one branch are still included (scoring
+    0 from the missing branch). Falls back to pure vector search automatically
+    when the keyword branch is empty (stop-word-only queries, no term matches).
+    """
     vec_literal = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
+
+    # Wider candidate pool gives RRF more material to rerank.
+    # top_k=5 -> candidate_limit=20; top_k=10 -> candidate_limit=40 (capped at 50)
+    candidate_limit = min(max(top_k * 4, 20), 50)
+
     stmt = text("""
+        WITH
+            vector_search AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (ORDER BY embedding <=> :vec::vector) AS rank
+                FROM chunks
+                WHERE repo_id = :repo_id
+                ORDER BY embedding <=> :vec::vector
+                LIMIT :candidate_limit
+            ),
+
+            keyword_search AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        ORDER BY ts_rank_cd(content_tsv, websearch_to_tsquery('english', :question)) DESC
+                    ) AS rank
+                FROM chunks
+                WHERE repo_id = :repo_id
+                  AND content_tsv @@ websearch_to_tsquery('english', :question)
+                ORDER BY ts_rank_cd(content_tsv, websearch_to_tsquery('english', :question)) DESC
+                LIMIT :candidate_limit
+            ),
+
+            rrf AS (
+                SELECT
+                    COALESCE(v.id, k.id) AS id,
+                    COALESCE(1.0 / (60 + v.rank), 0.0)
+                    + COALESCE(1.0 / (60 + k.rank), 0.0) AS rrf_score
+                FROM vector_search v
+                FULL OUTER JOIN keyword_search k ON v.id = k.id
+            )
+
         SELECT
-            file_path,
-            content,
-            (1 - (embedding <=> :vec::vector))::float AS score
-        FROM chunks
-        WHERE repo_id = :repo_id
-        ORDER BY embedding <=> :vec::vector
+            c.file_path,
+            c.content,
+            r.rrf_score AS score
+        FROM rrf r
+        JOIN chunks c ON c.id = r.id
+        ORDER BY r.rrf_score DESC
         LIMIT :top_k
     """)
 
-    result = await db.execute(stmt, {'vec': vec_literal, 'repo_id': repo_id, 'top_k': top_k})
+    result = await db.execute(
+        stmt,
+        {
+            'vec': vec_literal,
+            'question': question,
+            'repo_id': repo_id,
+            'candidate_limit': candidate_limit,
+            'top_k': top_k,
+        },
+    )
 
     return [dict(row) for row in result.mappings().all()]

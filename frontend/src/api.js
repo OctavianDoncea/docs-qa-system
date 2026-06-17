@@ -22,11 +22,11 @@ export const ingestRepo = (url, reingest) => request('/repos', {
 })
 export const deleteRepo = (id) => request(`/repos/${id}`, { method: 'DELETE' })
 
-export async function* streamQuery(question, repoId) {
+export async function* streamQuery(question, repoId, history = []) {
     const res = await fetch(`${BASE}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, repo_id: repoId })
+        body: JSON.stringify({ question, repo_id: repoId, history })
     })
 
     if (!res.ok) {
@@ -46,7 +46,6 @@ export async function* streamQuery(question, repoId) {
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-
         const parts = buffer.split('\n\n')
         buffer = parts.pop() ?? ''
 

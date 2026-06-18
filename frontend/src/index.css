@@ -464,6 +464,18 @@ html, body, #root {
     color: var(--text);
 }
 
+/* Search query note */
+.search-query-note {
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.search-query-note em {
+    font-style: italic;
+    color: var(--text);
+}
+
 /* Typing indicator */
 .typing-indicator {
     display: flex;

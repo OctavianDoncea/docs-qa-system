@@ -77,7 +77,7 @@ export default function App() {
                         const rest = prev.slice(0, -1)
                         const last = prev[prev.length - 1]
                         if (!last || last.role !== 'assistant') return prev
-                        return [...rest, { ...last, sources: event.sources ?? [], search_query: event.search_query ?? null, streaming: false }]
+                        return [...rest, { ...last, sources: event.sources ?? [], searchQuery: event.search_query ?? null, streaming: false }]
                     })
                 }
             }

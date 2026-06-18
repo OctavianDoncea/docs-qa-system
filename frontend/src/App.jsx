@@ -3,6 +3,13 @@ import RepoForm from './components/RepoForm'
 import Chat from './components/Chat'
 import * as api from './api'
 
+const MAX_HISTORY_MESSAGES = 6
+
+function buildHistory(messages) {
+    return messages.filter(m => m.role === 'user' || m.role === 'assistant').slice(-MAX_HISTORY_MESSAGES)
+        .map(m => ({ role: m.role, content: m.content }))
+}
+
 export default function App() {
     const [repos, setRepos] = useState([])
     const [activeRepoId, setActiveRepoId] = useState(null)
@@ -36,13 +43,15 @@ export default function App() {
     const handleQuery = async (question) => {
         if (!activeRepoId || isQuerying) return
 
+        const history = buildHistory(messages)
+
         setMessages(prev => [...prev, { role: 'user', content: question }])
         setIsQuerying(true)
 
         let firstToken = true
 
         try {
-            for await (const event of api.streamQuery(question, activeRepoId)) {
+            for await (const event of api.streamQuery(question, activeRepoId, history)) {
                 if (event.error) {
                     setMessages(prev => [...prev, { role: 'error', content: event.error }])
                     break
@@ -56,9 +65,9 @@ export default function App() {
                         ])
                     } else {
                         setMessages(prev => {
-                            const res = prev.slice(0, -1)
+                            const rest = prev.slice(0, -1)
                             const last = prev[prev.length - 1]
-                            return [...res, { ...last, content: last.content + event.content }]
+                            return [...rest, { ...last, content: last.content + event.content }]
                         })
                     }
                 }
@@ -68,7 +77,7 @@ export default function App() {
                         const rest = prev.slice(0, -1)
                         const last = prev[prev.length - 1]
                         if (!last || last.role !== 'assistant') return prev
-                        return [...rest, { ...last, sources: event.sources ?? [], streaming: false }]
+                        return [...rest, { ...last, sources: event.sources ?? [], search_query: event.search_query ?? null, streaming: false }]
                     })
                 }
             }

@@ -32,6 +32,12 @@ export default function Message({ message }) {
                     {isStreaming && <span className='stream-cursor' aria-hidden='true'></span>}
                 </div>
                 
+                {!isStreaming && message.searchQuery && (
+                    <div className='search-query-note'>
+                        Searched docs as: <em>&ldquo;{message.searchQuery}&rdquo;</em>
+                    </div>
+                )}
+                
                 {hasSources && (
                     <div className='sources'>
                         <button className='sources-toggle' onClick={() => setSourcesOpen(e => !e)}>

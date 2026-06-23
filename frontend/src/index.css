@@ -22,6 +22,8 @@
     --info-br: #bee3f8;
     --score-bg: #edf5ff;
     --score-fg: #0043ce;
+    --warn-bg: #fffaeb;
+    --warn-br: #f1c21b;
     --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
     --r: 12px;
     --r-sm: 8px;
@@ -353,6 +355,11 @@ html, body, #root {
     border: 1px solid var(--error-br);
     font-size: 13px;
     border-bottom-left-radius: 4px;
+}
+
+.bubble-low-confidence {
+    background: var(--warn-bg);
+    border-left: 3px solid var(--warn-br);
 }
 
 /* Source section */

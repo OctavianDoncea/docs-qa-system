@@ -35,7 +35,7 @@ def _prepare_history(history: list[dict]) -> list[dict]:
     return cleaned[-(MAX_HISTORY_TURNS * 2):]
 
 async def _condense_question(question: str, history: list[dict], model: str) -> str:
-    if not history:
+    if not history or not _groq_api_key_configured():
         return question
 
     client = _get_groq_client()
@@ -44,13 +44,21 @@ async def _condense_question(question: str, history: list[dict], model: str) -> 
     prompt = (
         f'Conversation so far:\n{convo}\n\n'
         f'Follow-up question: {question}\n\n'
-        'Rewrite the follow-up question as a standalone question that includes all context needed to understand it without the conversations above. '
-        'Preserve technical terms, function names, and identifiers exactly as written. If the follow-up question is already standalone, return it unchanged. '
-        'Output only the rewritten question, no explanation, no quotes.'
+        'Rewrite the follow-up question as a standalone question that '
+        'includes all context needed to understand it without the '
+        'conversation above. Preserve technical terms, function names, '
+        'and identifiers exactly as written. If the follow-up question '
+        'is already standalone, return it unchanged. '
+        'Output only the rewritten question — no explanation, no quotes.'
     )
 
     try:
-        response = await client.chat.completions.create(model=model, messages=[{'role': 'user', 'content': prompt}], max_tokens=120, temperature=0)
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{'role': 'user', 'content': prompt}],
+            max_tokens=120,
+            temperature=0,
+        )
         condensed = response.choices[0].message.content.strip()
         return condensed or question
     except Exception as e:
@@ -97,15 +105,8 @@ def _sources_payload(chunks: list[dict]) -> list[dict]:
 
 async def stream_query_repo(question: str, repo_id: int, db: AsyncSession, history: list[dict] | None = None):
     """
-    Full RAG pipeline with hybrid retrieval, as an async generator.
-    Yields SSE-formatted strings consumed by the /query StreamingResponse.
-
-    Steps:
-    1. Embed the question via Ollama (encode_query)
-    2. Hybrid search: vector + keyword, fused with RRF
-    3. Build a prompt with inline source references
-    4. Stream the LLM response token by token (Groq, with Ollama fallback)
-    5. Yield a final event with the source list
+    Full RAG pipeline: condense -> hybrid search -> confidence gate ->
+    stream the answer (or decline). Yields SSE-formatted strings.
     """
     settings = get_settings()
     history = _prepare_history(history or [])
@@ -122,8 +123,36 @@ async def stream_query_repo(question: str, repo_id: int, db: AsyncSession, histo
         if not chunks:
             yield 'data: ' + json.dumps({
                 'content': 'No relevant documentation found for this question.',
+                'done': False,
+            }) + '\n\n'
+            yield 'data: ' + json.dumps({
+                'content': '',
                 'done': True,
                 'sources': [],
+            }) + '\n\n'
+            return
+
+        max_score = max(c['score'] for c in chunks)
+        if max_score < settings.confidence_threshold:
+            pct = round(max_score * 100)
+            threshold_pct = round(settings.confidence_threshold * 100)
+            logger.info(
+                'Low confidence (%.3f < %.3f) - skipping LLM call',
+                max_score,
+                settings.confidence_threshold,
+            )
+            message = (
+                f"This query doesn't appear to be covered in the loaded documentation. "
+                f'Best match: {pct}% similarity (threshold: {threshold_pct}%). '
+                'Try rephrasing or loading a different repository.'
+            )
+            yield 'data: ' + json.dumps({'content': message, 'done': False}) + '\n\n'
+            yield 'data: ' + json.dumps({
+                'content': '',
+                'done': True,
+                'sources': [],
+                'low_confidence': True,
+                'confidence': round(max_score, 4),
             }) + '\n\n'
             return
 
@@ -225,12 +254,9 @@ async def _hybrid_search(
     Hybrid retrieval: pgvector cosine search + PostgreSQL full-text search,
     fused with Reciprocal Rank Fusion (RRF).
 
-    score(d) = 1/(k + rank_vector(d)) + 1/(k + rank_keyword(d))   k = 60
-
-    Each branch retrieves candidate_limit results independently. A FULL OUTER
-    JOIN ensures chunks found by only one branch are still included (scoring
-    0 from the missing branch). Falls back to pure vector search automatically
-    when the keyword branch is empty (stop-word-only queries, no term matches).
+    RRF selects and ranks candidates; the score returned to the caller is the
+    actual cosine similarity (recomputed for the final top_k rows), not the
+    internal RRF score.
     """
     vec_literal = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
 
@@ -275,7 +301,7 @@ async def _hybrid_search(
         SELECT
             c.file_path,
             c.content,
-            r.rrf_score AS score
+            (1 - (c.embedding <=> :vec::vector))::float AS score
         FROM rrf r
         JOIN chunks c ON c.id = r.id
         ORDER BY r.rrf_score DESC

@@ -1,3 +1,4 @@
+import ast
 import logging
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,35 +31,33 @@ async def ingest_repo(url: str, db: AsyncSession, reingest: bool = False) -> Rep
         db.add(repo)
         await db.flush()
 
-    # 1. fetch
     logger.info(f'Fetching docs from {url}')
     files = await fetch_repo_docs(url)
 
     if not files:
-        raise ValueError(f'No documentation files found in {url}. The repo may be private or have no .md/.rst/.txt files.')
+        raise ValueError(f'No documentation files found in {url}. The repo may be private or have no .md/.rst/.txt/.py files.')
 
     logger.info(f'Fetched {len(files)} files')
 
-    # 2. split
-    logger.info(f'Splitting into chunks (max_chars={settings.chunk_size}, overlap={settings.chunk_overlap})')
     all_chunks: list[dict] = []
-
     for file in files:
-        chunks = split_markdown(file['content'], max_chars=settings.chunk_size, overlap=settings.chunk_overlap)
-        for i, text in enumerate(chunks):
-            all_chunks.append({'file_path': file['path'], 'content': text, 'chunk_index': i})
+        path = file['path']
+        if path.lower().endswith('.py'):
+            texts = extract_python_docstrings(file['content'])
+        else:
+            texts = split_markdown(file['content'], max_chars=settings.chunk_size, overlap=settings.chunk_overlap)
+        for i, text in enumerate(texts):
+            all_chunks.append({'file_path': path, 'content': text, 'chunk_index': i})
 
     if not all_chunks:
-        raise ValueError('Files were not found but contained no extractable content.')
+        raise ValueError('Files were found but contained no extractable content.')
 
     logger.info(f'Created {len(all_chunks)} chunks across {len(files)} files')
 
-    # 3. embed via Ollama
-    logger.info(f'Embedding {len(all_chunks)} chunks via Ollama...')
+    logger.info(f'Embedding {len(all_chunks)} chunks via Ollama')
     texts = [c['content'] for c in all_chunks]
     embeddings = await embedding_service.encode_documents(texts)
 
-    # 4. bulk insert
     logger.info('Saving to database')
     db.add_all([
         Chunk(
@@ -66,7 +65,7 @@ async def ingest_repo(url: str, db: AsyncSession, reingest: bool = False) -> Rep
             file_path=c['file_path'],
             content=c['content'],
             embedding=embeddings[i],
-            chunk_index=c['chunk_index']
+            chunk_index=c['chunk_index'],
         )
         for i, c in enumerate(all_chunks)
     ])
@@ -78,8 +77,42 @@ async def ingest_repo(url: str, db: AsyncSession, reingest: bool = False) -> Rep
     logger.info(f'Done. {repo.chunk_count} chunks ingested for {name}')
     return repo
 
+def extract_python_docstrings(content: str) -> list[str]:
+    """Parse a Python source file and extract module, class, and function docstrings as labelled chunks."""
+    try:
+        tree = ast.parse(content)
+    except (SyntaxError, ValueError) as e:
+        logger.warning('Skipping unparseable Python file')
+        return []
+
+    chunks: list[str] = []
+
+    module_doc = ast.get_docstring(tree)
+    if module_doc and len(module_doc.strip()) >= 40:
+        chunks.append(module_doc.strip())
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            doc = ast.get_docstring(node)
+            if not doc or len(doc.strip()) < 40:
+                continue
+
+            label = _node_label(node)
+            chunks.append(f'{label}\n\n{doc.strip()}')
+
+    return chunks
+
+def _node_label(node: ast.AST) -> str:
+    """Build a readable label for a class or function node."""
+    if isinstance(node, ast.ClassDef):
+        return f'Class: {node.name}'
+
+    args = [a.arg for a in node.args.args]
+    prefix = 'async def' if isinstance(node, ast.AsyncFunctionDef) else 'def'
+    return f"{prefix} {node.name}({', '.join(args)})"
+
 def split_markdown(text: str, max_chars: int = 1500, overlap: int = 200) -> list[str]:
-    heading_re = re.compile(r"(?=^#{1,3} )", re.MULTILINE)
+    heading_re = re.compile(r'(?=^#{1,3} )', re.MULTILINE)
     sections = [s.strip() for s in heading_re.split(text) if s.strip()]
 
     chunks: list[str] = []
@@ -87,10 +120,11 @@ def split_markdown(text: str, max_chars: int = 1500, overlap: int = 200) -> list
         if len(section) <= max_chars:
             chunks.append(section)
         else:
-            chunks.extend(_split_by_paragraph(section, max_chars, overlap))
-    return [c for c in chunks if len(c) >= 100 ]
+            chunks.extend(_split_by_paragraphs(section, max_chars, overlap))
 
-def _split_by_paragraph(text: str, max_chars: int, overlap: int) -> list[str]:
+    return [c for c in chunks if len(c) >= 100]
+
+def _split_by_paragraphs(text: str, max_chars: int, overlap: int) -> list[str]:
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
     result: list[str] = []
     current = ''
@@ -104,7 +138,7 @@ def _split_by_paragraph(text: str, max_chars: int, overlap: int) -> list[str]:
                 result.append(current)
             if len(p) > max_chars:
                 result.extend(_split_by_sentences(p, max_chars, overlap))
-                current = ''
+                current= ''
             else:
                 current = p
 
@@ -114,19 +148,19 @@ def _split_by_paragraph(text: str, max_chars: int, overlap: int) -> list[str]:
     return result
 
 def _split_by_sentences(text: str, max_chars: int, overlap: int) -> list[str]:
-    sentences = re.split(r"(?<=[.!?])\s+", text)
+    sentences = re.split(r'(?<=[.!?])\s+', text)
     result: list[str] = []
     current = ''
 
-    for s in sentences:
-        candidate = f'{current} {s}'.strip() if current else s
+    for sentence in sentences:
+        candidate = f'{current} {sentence}'.strip() if current else sentence
         if len(candidate) <= max_chars:
             current = candidate
         else:
             if current:
                 result.append(current)
             tail = current[-overlap:] if len(current) > overlap else current
-            current = f'{tail} {s}'.strip() if tail else s
+            current = f'{tail} {sentence}'.strip() if tail else sentence
 
     if current:
         result.append(current)

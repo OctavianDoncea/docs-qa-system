@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     chunk_overlap: int
     top_k: int
     github_token: str = ''
+    allowed_origins: str = 'http://localhost:5173, http://localhost:3000'
+    confidence_threshold: float = 0.45
 
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding='utf-8', extra='ignore')
 

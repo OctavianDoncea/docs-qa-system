@@ -6,9 +6,9 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-SUPPORTED_EXTENSIONS = {'.md', '.mdx', '.rst', '.txt'}
+SUPPORTED_EXTENSIONS = {'.md', '.mdx', '.rst', '.txt', '.py'}
 SKIP_PREFIXES = ('node_modules/', '.github/', 'vendor/', '__pycache__/', '.git/', 'test/', 'tests/', 'spec/', 'specs/')
-MAX_FILES = 50
+MAX_FILES = 120
 
 def parse_github_url(url: str) -> tuple[str, str]:
     url = url.rstrip('/')
@@ -25,8 +25,10 @@ def _is_doc_file(path: str) -> bool:
     lower = path.lower()
     if any(lower.startswith(p) for p in SKIP_PREFIXES):
         return False
-    
-    return lower.endswith(tuple(SUPPORTED_EXTENSIONS))
+    filename = lower.rsplit('/', 1)[-1]
+    if filename.startswith('_') and filename != '__init__.py':
+        return False
+    return lower.endswith(SUPPORTED_EXTENSIONS)
 
 async def fetch_repo_docs(url: str) -> list[dict[str, str]]:
     """Fetch documentation files from a public GitHub repository."""

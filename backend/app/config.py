@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     github_token: str = ''
     allowed_origins: str = 'http://localhost:5173, http://localhost:3000'
     confidence_threshold: float = 0.45
+    rerank_enabled: bool = True
+    rerank_candidates: int = 12
 
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding='utf-8', extra='ignore')
 

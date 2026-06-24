@@ -13,6 +13,7 @@ _groq_client: AsyncGroq | None = None
 
 MAX_HISTORY_TURNS = 3
 MAX_HISTORY_CHARS = 800
+RERANK_SNIPPET_CHARS = 400
 
 NOT_COVERED_MESSAGE = 'This information is not covered in the documentation.'
 
@@ -21,6 +22,8 @@ def _get_groq_client() -> AsyncGroq:
     global _groq_client
     if _groq_client is None:
         settings = get_settings()
+        if not settings.groq_api_key:
+            raise  RuntimeError('GROQ_API_KEY is not set in .env. Get a free key at https://console.groq.com')
         _groq_client = AsyncGroq(api_key=settings.groq_api_key)
 
     return _groq_client
@@ -65,13 +68,49 @@ async def _condense_question(question: str, history: list[dict], model: str) -> 
         logger.warning('Question condensing failed, using original question: %s', e)
         return question
 
+async def _rerank(question: str, chunks: list[dict], top_k: int, model: str) -> list[dict]:
+    """Use the LLM to score each candidate chunk's relevance to the question, then return the top k by that score"""
+    if len(chunks) <= top_k:
+        return chunks
+
+    client = _get_groq_client()
+
+    passages = '\n\n'.join(f"[{i}] {c['content'][:RERANK_SNIPPET_CHARS]}" for i, c in enumerate(chunks))
+    prompt = (f'Question: {question}\n\nPassages:\n{passages}\n\n'
+        'Score how well each passage answers the question, from 0 (irrelevant) to 10 (directly answers it).'
+        'Respond with only a JSON object mapping each passage index (as a string) to its integer score, e.g. {"0": 8, "1": 2, "2": 5}.'
+        'No explanation, no markdown, no code fences.'
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model = model,
+            messages = [{'role': 'user', 'content': prompt}],
+            max_tokens = 300,
+            temperature = 0,
+            response_format = {'type': 'json_object'}
+        )
+        raw = response.choices[0].message.content
+        scores = json.loads(raw)
+
+        scored = [(chunks[i], int(scores.get(str(i), 0))) for i in range(len(chunks))]
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+
+        reranked = [chunk for chunk, _ in scored[:top_k]]
+        logger.info(f'Re-ranked {len(chunks)} candidates -> top {top_k} (LLM scores: {[s for _, s in scored[:top_k]]})')
+
+        return reranked
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+        logger.warning(f'Re-ranking failed, using hybrid order: {e}')
+        return chunks[:top_k]
+
 def _build_messages_with_history(question: str, context: str, history: list[dict]) -> list[dict[str, str]]:
     system_prompt = (
         'You are a documentation assistant having an ongoing conversation with a user. '
         'Use the conversation history ONLY to understand what the user is referring to '
         '(e.g. resolving "it", "that", or implicit subjects from earlier turns). '
-        'Base every factual claim strictly on the Context section provided in the final message '
-        '– never on prior assistant answers, which may be incomplete. '
+        'Base every factual claim strictly on the Context section provided in the final message, '
+        'never on prior assistant answers, which may be incomplete. '
         'For every fact you state, cite its source number in square brackets, for example [1] or [2]. '
         f'If the answer is not present in the context, respond with exactly: "{NOT_COVERED_MESSAGE}"'
     )
@@ -118,7 +157,8 @@ async def stream_query_repo(question: str, repo_id: int, db: AsyncSession, histo
             logger.info(f'Condensed question: {question} -> {search_question}')
         
         query_embedding = await embedding_service.encode_query(search_question)
-        chunks = await _hybrid_search(query_embedding, search_question, repo_id, settings.top_k, db)
+        retrieve_n = settings.rerank_candidates if settings.rerank_enabled else settings.top_k
+        chunks = await _hybrid_search(query_embedding, search_question, repo_id, retrieve_n, db)
 
         if not chunks:
             yield 'data: ' + json.dumps({
@@ -132,6 +172,11 @@ async def stream_query_repo(question: str, repo_id: int, db: AsyncSession, histo
             }) + '\n\n'
             return
 
+        if settings.rerank_enabled:
+            chunks = await _rerank(question, chunks, settings.top_k, settings.groq_llm_model)
+        else:
+            chunks = chunks[:settings.top_k]
+        
         max_score = max(c['score'] for c in chunks)
         if max_score < settings.confidence_threshold:
             pct = round(max_score * 100)
@@ -243,20 +288,10 @@ async def _stream_ollama(messages: list[dict[str, str]], model: str):
             raise
 
 
-async def _hybrid_search(
-    query_embedding: list[float],
-    question: str,
-    repo_id: int,
-    top_k: int,
-    db: AsyncSession,
-) -> list[dict]:
+async def _hybrid_search(query_embedding: list[float], question: str, repo_id: int, top_k: int, db: AsyncSession) -> list[dict]:
     """
     Hybrid retrieval: pgvector cosine search + PostgreSQL full-text search,
     fused with Reciprocal Rank Fusion (RRF).
-
-    RRF selects and ranks candidates; the score returned to the caller is the
-    actual cosine similarity (recomputed for the final top_k rows), not the
-    internal RRF score.
     """
     vec_literal = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
 

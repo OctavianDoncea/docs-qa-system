@@ -27,3 +27,23 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
 
     repo: Mapped['Repo'] = relationship('Repo', back_populates='chunks')
+
+class IngestJob(Base):
+    __tablename__ = 'ingest_jobs'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    repo_url: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default='pending')
+    # pending | running | completed | failed
+    phase: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    repo_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('repos.id', ondelete='SET NULL'), nullable=True
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

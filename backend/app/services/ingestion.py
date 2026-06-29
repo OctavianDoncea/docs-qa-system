@@ -25,11 +25,12 @@ async def ingest_repo(url: str, db: AsyncSession, reingest: bool = False, progre
     url = f'https://github.com/{owner}/{repo}'
 
     existing = await db.scalar(select(Repo).where(Repo.url == url))
-    if existing and not reingest:
+    if existing and existing.chunk_count > 0 and not reingest:
         raise ValueError(f"'{name}' is already ingested (id={existing.id}). Pass reingest=true to re-index it.")
 
-    if existing and reingest:
-        logger.info(f'Re-ingesting {name}: removing {existing.chunk_count} old chunks')
+    if existing:
+        if existing.chunk_count > 0:
+            logger.info(f'Re-ingesting {name}: removing {existing.chunk_count} old chunks')
         await db.execute(delete(Chunk).where(Chunk.repo_id == existing.id))
         repo = existing
         repo.chunk_count = 0

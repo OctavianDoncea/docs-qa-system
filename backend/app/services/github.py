@@ -6,7 +6,7 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-SUPPORTED_EXTENSIONS = {'.md', '.mdx', '.rst', '.txt', '.py'}
+SUPPORTED_EXTENSIONS = ('.md', '.mdx', '.rst', '.txt', '.py')
 SKIP_PREFIXES = ('node_modules/', '.github/', 'vendor/', '__pycache__/', '.git/', 'test/', 'tests/', 'spec/', 'specs/')
 MAX_FILES = 120
 

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import httpx
 from groq import AsyncGroq, APIStatusError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,16 +58,48 @@ async def _condense_question(question: str, history: list[dict], model: str) -> 
 
     try:
         response = await client.chat.completions.create(
-            model=model,
             messages=[{'role': 'user', 'content': prompt}],
-            max_tokens=120,
-            temperature=0,
+            **_groq_request_kwargs(model, max_tokens=120),
         )
         condensed = response.choices[0].message.content.strip()
         return condensed or question
     except Exception as e:
         logger.warning('Question condensing failed, using original question: %s', e)
         return question
+
+def _parse_json_object(raw: str) -> dict:
+    text = raw.strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```$', '', text)
+    start = text.find('{')
+    end = text.rfind('}')
+    if start == -1 or end == -1:
+        raise ValueError('No JSON object found in response')
+    return json.loads(text[start:end + 1])
+
+def _parse_rerank_scores(raw: str, count: int) -> dict[str, int]:
+    scores: dict[str, int] = {}
+    for line in raw.splitlines():
+        match = re.match(r'^\s*(\d+)\s*[:=]\s*(\d+)\s*$', line.strip())
+        if match:
+            scores[match.group(1)] = int(match.group(2))
+    if scores:
+        return scores
+    return _parse_json_object(raw)
+
+def _groq_request_kwargs(model: str, *, max_tokens: int, temperature: float = 0, stream: bool = False) -> dict:
+    kwargs: dict = {
+        'model': model,
+        'max_tokens': max_tokens,
+        'temperature': temperature,
+    }
+    if stream:
+        kwargs['stream'] = True
+    if 'gpt-oss' in model:
+        kwargs['reasoning_format'] = 'hidden'
+        kwargs['max_tokens'] = max(max_tokens, 512)
+    return kwargs
 
 async def _rerank(question: str, chunks: list[dict], top_k: int, model: str) -> list[dict]:
     """Use the LLM to score each candidate chunk's relevance to the question, then return the top k by that score"""
@@ -76,22 +109,21 @@ async def _rerank(question: str, chunks: list[dict], top_k: int, model: str) -> 
     client = _get_groq_client()
 
     passages = '\n\n'.join(f"[{i}] {c['content'][:RERANK_SNIPPET_CHARS]}" for i, c in enumerate(chunks))
-    prompt = (f'Question: {question}\n\nPassages:\n{passages}\n\n'
-        'Score how well each passage answers the question, from 0 (irrelevant) to 10 (directly answers it).'
-        'Respond with only a JSON object mapping each passage index (as a string) to its integer score, e.g. {"0": 8, "1": 2, "2": 5}.'
-        'No explanation, no markdown, no code fences.'
+    prompt = (
+        f'Question: {question}\n\nPassages:\n{passages}\n\n'
+        'Score how well each passage answers the question from 0 (irrelevant) to 10 (directly answers it).\n'
+        'Reply with one line per passage using this exact format: INDEX: SCORE\n'
+        'Example:\n0: 8\n1: 2\n2: 5\n'
+        'No explanation, no markdown, no extra text.'
     )
 
     try:
         response = await client.chat.completions.create(
-            model = model,
-            messages = [{'role': 'user', 'content': prompt}],
-            max_tokens = 300,
-            temperature = 0,
-            response_format = {'type': 'json_object'}
+            messages=[{'role': 'user', 'content': prompt}],
+            **_groq_request_kwargs(model, max_tokens=512),
         )
-        raw = response.choices[0].message.content
-        scores = json.loads(raw)
+        raw = response.choices[0].message.content or ''
+        scores = _parse_rerank_scores(raw, len(chunks))
 
         scored = [(chunks[i], int(scores.get(str(i), 0))) for i in range(len(chunks))]
         scored.sort(key=lambda pair: pair[1], reverse=True)
@@ -100,6 +132,9 @@ async def _rerank(question: str, chunks: list[dict], top_k: int, model: str) -> 
         logger.info(f'Re-ranked {len(chunks)} candidates -> top {top_k} (LLM scores: {[s for _, s in scored[:top_k]]})')
 
         return reranked
+    except APIStatusError as e:
+        logger.warning(f'Re-ranking API call failed {model}, using hybrid order: {e}')
+        return chunks[:top_k]
     except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
         logger.warning(f'Re-ranking failed, using hybrid order: {e}')
         return chunks[:top_k]
@@ -151,7 +186,7 @@ async def stream_query_repo(question: str, repo_id: int, db: AsyncSession, histo
     history = _prepare_history(history or [])
 
     try:
-        search_question = await _condense_question(question, history, settings.llm_model)
+        search_question = await _condense_question(question, history, settings.groq_llm_model)
         was_rewritten = search_question.strip().lower() != question.strip().lower()
         if was_rewritten:
             logger.info(f'Condensed question: {question} -> {search_question}')
@@ -246,11 +281,8 @@ async def _stream_llm(messages: list[dict[str, str]]):
 async def _stream_groq(messages: list[dict[str, str]], model: str):
     client = _get_groq_client()
     stream = await client.chat.completions.create(
-        model=model,
         messages=messages,
-        max_tokens=1024,
-        temperature=0.1,
-        stream=True,
+        **_groq_request_kwargs(model, max_tokens=1024, temperature=0.1, stream=True),
     )
 
     async for chunk in stream:
@@ -304,10 +336,10 @@ async def _hybrid_search(query_embedding: list[float], question: str, repo_id: i
             vector_search AS (
                 SELECT
                     id,
-                    ROW_NUMBER() OVER (ORDER BY embedding <=> :vec::vector) AS rank
+                    ROW_NUMBER() OVER (ORDER BY embedding <=> CAST(:vec AS vector)) AS rank
                 FROM chunks
                 WHERE repo_id = :repo_id
-                ORDER BY embedding <=> :vec::vector
+                ORDER BY embedding <=> CAST(:vec AS vector)
                 LIMIT :candidate_limit
             ),
 
@@ -336,7 +368,7 @@ async def _hybrid_search(query_embedding: list[float], question: str, repo_id: i
         SELECT
             c.file_path,
             c.content,
-            (1 - (c.embedding <=> :vec::vector))::float AS score
+            (1 - (c.embedding <=> CAST(:vec AS vector)))::float AS score
         FROM rrf r
         JOIN chunks c ON c.id = r.id
         ORDER BY r.rrf_score DESC

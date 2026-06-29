@@ -23,7 +23,7 @@ export const startIngest = (url, reingest = false) => request('/repos', {
     body: JSON.stringify({ url, reingest })
 })
 
-export const pollJob = (jobId) => request(`/repos/job/${jobId}`)
+export const pollJob = (jobId) => request(`/repos/jobs/${jobId}`)
 
 export async function* streamQuery(question, repoId, history = []) {
     const res = await fetch(`${BASE}/query`, {

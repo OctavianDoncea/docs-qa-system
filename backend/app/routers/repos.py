@@ -53,7 +53,8 @@ async def ingest_repo(request: IngestRequest, background_tasks: BackgroundTasks,
 
     return JobResponse(job_id=job.id, status=job.status)
 
-@router.get('/job/{job_id}', response_model=JobStatusResponse)
+@router.get('/jobs/{job_id}', response_model=JobStatusResponse)
+@router.get('/job/{job_id}', response_model=JobStatusResponse, include_in_schema=False)
 async def get_job(job_id: int, db: AsyncSession = Depends(get_db)):
     job = await db.get(IngestJob, job_id)
     if not job:

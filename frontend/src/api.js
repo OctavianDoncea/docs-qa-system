@@ -15,12 +15,15 @@ async function request(path, options = {}) {
 }
 
 export const getRepos = () => request('/repos')
-export const ingestRepo = (url, reingest) => request('/repos', {
+export const deleteRepo = (id) => request(`/repos/${id}`, { method: 'DELETE' })
+
+export const startIngest = (url, reingest = false) => request('/repos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url, reingest })
 })
-export const deleteRepo = (id) => request(`/repos/${id}`, { method: 'DELETE' })
+
+export const pollJob = (jobId) => request(`/repos/job/${jobId}`)
 
 export async function* streamQuery(question, repoId, history = []) {
     const res = await fetch(`${BASE}/query`, {

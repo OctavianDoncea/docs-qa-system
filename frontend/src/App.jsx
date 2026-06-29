@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import RepoForm from './components/RepoForm'
 import Chat from './components/Chat'
 import * as api from './api'
@@ -14,29 +14,56 @@ export default function App() {
     const [repos, setRepos] = useState([])
     const [activeRepoId, setActiveRepoId] = useState(null)
     const [messages, setMessages] = useState([])
-    const [isIngesting, setIsIngesting] = useState(false)
     const [isQuerying, setIsQuerying] = useState(false)
     const [error, setError] = useState(null)
+    const [progress, setProgress] = useState(null)
+    const pollRef = useRef(null)
 
     useEffect(() => {
         api.getRepos().then(data => {
             setRepos(data)
             if (data.length > 0) setActiveRepoId(data[0].id)
         }).catch(() => {})
+        return () => { if (pollRef.current) clearTimeout(pollRef.current) }
     }, [])
 
     const handleDigest = async (url) => {
-        setIsIngesting(true)
         setError(null)
+        setProgress({ phase: 'starting', progress: 0 })
+
         try {
-            const repo = await api.ingestRepo(url)
-            setRepos(prev => [repo, ...prev.filter(r => r.id !== repo.id)])
-            setActiveRepoId(repo.id)
-            setMessages([])
+            const { job_id } = await api.startIngest(url)
+
+            const poll = async () => {
+                try {
+                    const job = await api.pollJob(job_id)
+                    setProgress({ phase: job.phase ?? job.status, progress: job.progress })
+
+                    if (job.status === 'completed') {
+                        setProgress(null)
+                        const fresh = await api.getRepos()
+                        setRepos(fresh)
+                        if (job.repo_id) {
+                            setActiveRepoId(job.repo_id)
+                            setMessages([])
+                        }
+                        return
+                    }
+                    if (job.status === 'failed') {
+                        setProgress(null)
+                        setError(job.error ?? 'Ingestion failed.')
+                        return
+                    }
+                    pollRef.current = setTimeout(poll, 1000)
+                } catch (err) {
+                    setProgress(null)
+                    setError(err.message)
+                }
+            }
+            poll()
         } catch (err) {
+            setProgress(null)
             setError(err.message)
-        } finally {
-            setIsIngesting(false)
         }
     }
 
@@ -101,20 +128,13 @@ export default function App() {
             <header className='app-header'>
                 <span className='app-logo'>docs-qa</span>
                 {activeRepo && (
-                    <span className='active-repo'>{activeRepo.name} - {activeRepo.chunk_count} chunks</span>
+                    <span className='active-repo'>{activeRepo.name} ({activeRepo.chunk_count} chunks)</span>
                 )}
             </header>
 
-            <RepoForm repos={repos} activeRepoId={activeRepoId} isIngesting={isIngesting} onIngest={handleDigest} onRepoChange={handleRepoChange} />
+            <RepoForm repos={repos} activeRepoId={activeRepoId} progress={progress} onIngest={handleDigest} onRepoChange={handleRepoChange} />
 
-            {isIngesting && (
-                <div className='status-banner status-info'>
-                    <span className='spinner' style={{ borderTopColor: 'var(--info-fg)', borderColor: 'var(--info-br)' }}></span>
-                    Ingesting documentation. This will take 20-60 seconds.
-                </div>
-            )}
-
-            {error && !isIngesting && (
+            {error && !progress && (
                 <div className='status-banner status-error'>
                     <span>{error}</span>
                     <button onClick={() => setError(null)} aria-label="Dismiss error">x</button>

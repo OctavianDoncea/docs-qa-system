@@ -1,11 +1,13 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from starlette.requests import Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Repo
 from app.services import retrieval
+from app.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/query', tags=['query'])
@@ -22,17 +24,18 @@ class QueryRequest(BaseModel):
 
 
 @router.post('', summary='Ask a question about an ingested repository', response_description='text/event-stream of SSE events. Each event: {content, done} or {content, done, sources} or {error, done}.')
-async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit('30/hour')
+async def query(request: Request, payload: QueryRequest, db: AsyncSession = Depends(get_db)):
     """Streams the answer as Server-Sent Events."""
 
-    repo = await db.get(Repo, request.repo_id)
+    repo = await db.get(Repo, payload.repo_id)
     if not repo:
-        raise HTTPException(status_code=404, detail=f'No repo found with id {request.repo_id}.')
+        raise HTTPException(status_code=404, detail=f'No repo found with id {payload.repo_id}.')
 
-    history_dicts = [h.model_dump() for h in request.history]
+    history_dicts = [h.model_dump() for h in payload.history]
 
     async def generate():
-        async for chunk in retrieval.stream_query_repo(question=request.question, repo_id=request.repo_id, db=db, history=history_dicts):
+        async for chunk in retrieval.stream_query_repo(question=payload.question, repo_id=payload.repo_id, db=db, history=history_dicts):
             yield chunk
 
     return StreamingResponse(generate(), media_type='text/event-stream', headers={

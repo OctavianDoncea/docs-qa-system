@@ -1,5 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from starlette.requests import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -7,6 +8,7 @@ from app.database import get_db
 from app.models import IngestJob, Repo
 from app.services import ingestion
 from app.auth import require_api_key
+from app.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/repos', tags=['repos'])
@@ -44,13 +46,14 @@ class RepoResponse(BaseModel):
 
 
 @router.post('', response_model=JobResponse, status_code=status.HTTP_202_ACCEPTED)
-async def ingest_repo(request: IngestRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), _: None = Depends(require_api_key)):
-    job = IngestJob(repo_url=request.url, status='pending', progress=0)
+@limiter.limit('3/hour')
+async def ingest_repo(request: Request, payload: IngestRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    job = IngestJob(repo_url=payload.url, status='pending', progress=0)
     db.add(job)
     await db.commit()
     await db.refresh(job)
 
-    background_tasks.add_task(ingestion.run_ingest_job, job.id, request.url, request.reingest)
+    background_tasks.add_task(ingestion.run_ingest_job, job.id, payload.url, payload.reingest)
 
     return JobResponse(job_id=job.id, status=job.status)
 

@@ -1,4 +1,5 @@
 import ssl
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from pgvector.asyncpg import register_vector
@@ -22,8 +23,13 @@ def normalize_db_url(url: str) -> tuple[str, dict]:
 
 def _build_engine(url: str):
     url, connect_args = normalize_db_url(url)
-    connect_args["init"] = register_vector
-    return create_async_engine(url, echo=False, connect_args=connect_args)
+    engine = create_async_engine(url, echo=False, connect_args=connect_args)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _register_vector(dbapi_connection, connection_record):
+        dbapi_connection.run_async(register_vector)
+
+    return engine
 
 
 engine = _build_engine(settings.database_url)

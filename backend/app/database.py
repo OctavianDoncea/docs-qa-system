@@ -7,13 +7,19 @@ from app.config import get_settings
 settings = get_settings()
 
 
-def _build_engine(url: str):
-    connect_args: dict = {"init": register_vector}
+def normalize_db_url(url: str) -> tuple[str, dict]:
+    connect_args: dict = {}
 
     if "sslmode=require" in url:
         url = url.replace("?sslmode=require", "").replace("&sslmode=require", "")
         connect_args["ssl"] = ssl.create_default_context()
 
+    return url, connect_args
+
+
+def _build_engine(url: str):
+    url, connect_args = normalize_db_url(url)
+    connect_args["init"] = register_vector
     return create_async_engine(url, echo=False, connect_args=connect_args)
 
 

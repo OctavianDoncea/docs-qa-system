@@ -8,7 +8,7 @@ ENV_FILE = ROOT_DIR / '.env'
 class Settings(BaseSettings):
     database_url: str
     google_api_key: str = ''
-    embedding_model: str = 'text-embedding-004'
+    embedding_model: str = 'gemini-embedding-001'
     ollama_url: str = 'http://localhost:11434'
     groq_api_key: str = ''
     groq_llm_model: str = 'llama-3.1-8b-instant'

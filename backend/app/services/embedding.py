@@ -4,9 +4,12 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# text-embedding-004 was shut down by Google on 2026-01-14; gemini-embedding-001
+# is the current GA replacement (same v1beta batchEmbedContents endpoint).
+_EMBED_MODEL = 'gemini-embedding-001'
 _EMBED_URL = (
     'https://generativelanguage.googleapis.com'
-    '/v1beta/models/text-embedding-004:batchEmbedContents'
+    f'/v1beta/models/{_EMBED_MODEL}:batchEmbedContents'
 )
 _BATCH_SIZE = 100   # Gemini free tier batch limit
 
@@ -50,7 +53,7 @@ async def _call_api(texts: list[str], task_type: str) -> list[list[float]]:
             json={
                 'requests': [
                     {
-                        'model': 'models/text-embedding-004',
+                        'model': f'models/{_EMBED_MODEL}',
                         'content': {'parts': [{'text': text}]},
                         'taskType': task_type,
                         'outputDimensionality': 768,

@@ -12,7 +12,10 @@ def normalize_db_url(url: str) -> tuple[str, dict]:
 
     if "sslmode=require" in url:
         url = url.replace("?sslmode=require", "").replace("&sslmode=require", "")
-        connect_args["ssl"] = ssl.create_default_context()
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        connect_args["ssl"] = ssl_ctx
 
     return url, connect_args
 

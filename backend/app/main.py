@@ -40,9 +40,16 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return request.app.state.limiter._inject_headers(response, request.state.view_rate_limit)
 
 
+allowed_origins = [
+    o.strip().rstrip('/')
+    for o in settings.allowed_origins.split(',')
+    if o.strip()
+]
+logger.info('CORS allowed origins: %s', allowed_origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.allowed_origins.split(',') if o.strip()],
+    allow_origins=allowed_origins,
     allow_methods=['*'],
     allow_headers=['*'],
 )

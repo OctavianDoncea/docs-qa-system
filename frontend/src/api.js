@@ -1,5 +1,15 @@
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
+// Optional API key for write actions (POST /repos, DELETE /repos/:id).
+// Leave VITE_API_KEY unset in deployed builds: any VITE_-prefixed value is
+// compiled into the public JS bundle and readable by anyone. Manage
+// ingest/delete via curl with the real key instead. See DEPLOYMENT, Part 3.
+const API_KEY = import.meta.env.VITE_API_KEY ?? ''
+
+function withApiKey(headers = {}) {
+    return API_KEY ? { ...headers, 'X-API-Key': API_KEY } : headers
+}
+
 async function request(path, options = {}) {
     const res = await fetch(`${BASE}${path}`, options)
     if (!res.ok) {
@@ -15,11 +25,14 @@ async function request(path, options = {}) {
 }
 
 export const getRepos = () => request('/repos')
-export const deleteRepo = (id) => request(`/repos/${id}`, { method: 'DELETE' })
+export const deleteRepo = (id) => request(`/repos/${id}`, {
+    method: 'DELETE',
+    headers: withApiKey()
+})
 
 export const startIngest = (url, reingest = false) => request('/repos', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withApiKey({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ url, reingest })
 })
 

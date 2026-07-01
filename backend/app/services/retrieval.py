@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.services import embedding as embedding_service
 from app.config import get_settings
+from app.utils import safe_error
 
 logger = logging.getLogger(__name__)
 
@@ -254,9 +255,9 @@ async def stream_query_repo(question: str, repo_id: int, db: AsyncSession, histo
 
         yield 'data: ' + json.dumps(done_payload) + '\n\n'
 
-    except Exception as e:
-        logger.exception('Streaming query failed')
-        yield 'data: ' + json.dumps({'error': str(e), 'done': True}) + '\n\n'
+    except Exception as exc:
+        safe_message = safe_error(exc, 'Streaming query failed')
+        yield 'data: ' + json.dumps({'error': safe_message, 'done': True}) + '\n\n'
 
 
 async def _stream_llm(messages: list[dict[str, str]]):

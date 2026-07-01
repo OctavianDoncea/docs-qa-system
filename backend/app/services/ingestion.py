@@ -9,6 +9,7 @@ from app.database import AsyncSessionLocal
 from app.services import embedding as embedding_service
 from app.services.github import fetch_repo_docs, parse_github_url
 from app.config import get_settings
+from app.utils import safe_error
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -112,13 +113,12 @@ async def run_ingest_job(job_id: int, url: str, reingest: bool) -> None:
             job.progress = 100
             job.repo_id = repo.id
             await db.commit()
-        except Exception as e:
-            logger.exception(f'Ingest job {job_id} failed')
+        except Exception as exc:
             await db.rollback()
             job = await db.get(IngestJob, job_id)
             if job:
                 job.status = 'failed'
-                job.error = str(e)
+                job.error = safe_error(exc, f'Ingestion job {job_id} failed')
                 await db.commit()
 
 def extract_python_docstrings(source: str) -> list[str]:

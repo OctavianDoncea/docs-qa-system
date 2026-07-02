@@ -326,10 +326,7 @@ async def _hybrid_search(query_embedding: list[float], question: str, repo_id: i
     Hybrid retrieval: pgvector cosine search + PostgreSQL full-text search,
     fused with Reciprocal Rank Fusion (RRF).
     """
-    vec_literal = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
-
-    # Wider candidate pool gives RRF more material to rerank.
-    # top_k=5 -> candidate_limit=20; top_k=10 -> candidate_limit=40 (capped at 50)
+    vec = [float(x) for x in query_embedding]
     candidate_limit = min(max(top_k * 4, 20), 50)
 
     stmt = text("""
@@ -379,7 +376,7 @@ async def _hybrid_search(query_embedding: list[float], question: str, repo_id: i
     result = await db.execute(
         stmt,
         {
-            'vec': vec_literal,
+            'vec': vec,
             'question': question,
             'repo_id': repo_id,
             'candidate_limit': candidate_limit,

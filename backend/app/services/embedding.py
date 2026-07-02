@@ -1,17 +1,20 @@
+import asyncio
 import logging
+import random
 import httpx
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# text-embedding-004 was shut down by Google on 2026-01-14; gemini-embedding-001
-# is the current GA replacement (same v1beta batchEmbedContents endpoint).
 _EMBED_MODEL = 'gemini-embedding-001'
 _EMBED_URL = (
     'https://generativelanguage.googleapis.com'
-    f'/v1beta/models/{_EMBED_MODEL}:batchEmbedContents'
+    f'/v1beta/models/{_EMBED_MODEL}:embedContent'
 )
-_BATCH_SIZE = 100   # Gemini free tier batch limit
+
+_REQUEST_SPACING = 0.5   # seconds between successive embed calls
+_MAX_RETRIES = 6
+_MAX_BACKOFF = 30.0      # cap for exponential backoff, seconds
 
 
 async def initialize() -> None:
@@ -37,35 +40,63 @@ async def encode_query(text: str) -> list[float]:
 
 
 async def _embed(texts: list[str], task_type: str) -> list[list[float]]:
-    all_embeddings: list[list[float]] = []
-    for i in range(0, len(texts), _BATCH_SIZE):
-        batch = texts[i : i + _BATCH_SIZE]
-        all_embeddings.extend(await _call_api(batch, task_type))
-    return all_embeddings
-
-
-async def _call_api(texts: list[str], task_type: str) -> list[list[float]]:
     settings = get_settings()
+    headers = {'x-goog-api-key': settings.google_api_key}
+    embeddings: list[list[float]] = []
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            _EMBED_URL,
-            headers={'x-goog-api-key': settings.google_api_key},
-            json={
-                'requests': [
-                    {
-                        'model': f'models/{_EMBED_MODEL}',
-                        'content': {'parts': [{'text': text}]},
-                        'taskType': task_type,
-                        'outputDimensionality': 768,
-                    }
-                    for text in texts
-                ]
-            },
-        )
+        for i, text in enumerate(texts):
+            if i:
+                await asyncio.sleep(_REQUEST_SPACING)
+            embeddings.append(await _embed_one(client, headers, text, task_type))
+    return embeddings
+
+
+def _retry_delay(resp: httpx.Response) -> float | None:
+    """Extract Google's suggested retry delay from a 429/5xx response, if any."""
+    retry_after = resp.headers.get('retry-after')
+    if retry_after:
+        try:
+            return float(retry_after)
+        except ValueError:
+            pass
+    try:
+        for detail in resp.json().get('error', {}).get('details', []):
+            delay = detail.get('retryDelay')  # google.rpc.RetryInfo, e.g. "17s"
+            if isinstance(delay, str) and delay.endswith('s'):
+                return float(delay[:-1])
+    except Exception:
+        pass
+    return None
+
+
+async def _embed_one(client: httpx.AsyncClient, headers: dict, text: str, task_type: str) -> list[float]:
+    payload = {
+        'model': f'models/{_EMBED_MODEL}',
+        'content': {'parts': [{'text': text}]},
+        'taskType': task_type,
+        'outputDimensionality': 768,
+    }
+    for attempt in range(_MAX_RETRIES):
+        resp = await client.post(_EMBED_URL, headers=headers, json=payload)
+
         if resp.status_code == 403:
             raise RuntimeError(
                 'Gemini API key rejected (403). Check GOOGLE_API_KEY and that '
                 'the Generative Language API is enabled in your Google Cloud project.'
             )
+
+        if resp.status_code in (429, 500, 503) and attempt < _MAX_RETRIES - 1:
+            delay = _retry_delay(resp)
+            if delay is None:
+                delay = min(2 ** attempt, _MAX_BACKOFF) + random.uniform(0, 1)
+            logger.warning(
+                'Gemini embed rate-limited/unavailable (%s); retrying in %.1fs (attempt %d/%d)',
+                resp.status_code, delay, attempt + 1, _MAX_RETRIES,
+            )
+            await asyncio.sleep(delay)
+            continue
+
         resp.raise_for_status()
-        return [item['values'] for item in resp.json()['embeddings']]
+        return resp.json()['embedding']['values']
+
+    raise RuntimeError('Gemini embedding failed after exhausting retries (rate limited).')

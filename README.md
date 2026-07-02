@@ -4,6 +4,10 @@ Ask natural-language questions about any public GitHub repository and get cited 
 
 Paste a repo URL, wait for ingestion, then chat. Answers stream in real time with inline citations that expand to show the exact doc chunks used.
 
+## Live demo
+
+The app is deployed and can be accessed at **https://docs-qa.octaviandoncea.workers.dev/**
+
 ---
 
 ## Features
@@ -22,7 +26,7 @@ Paste a repo URL, wait for ingestion, then chat. Answers stream in real time wit
 | **Conversational follow-ups** | Keeps the last few turns of chat history. Follow-up questions are rewritten into standalone search queries so "what about that?" still retrieves the right docs. |
 | **Inline citations** | Every factual claim is cited with `[1]`, `[2]`, etc. Source cards show file path, similarity score, and the full chunk text. |
 | **Groq + Ollama LLM fallback** | Uses Groq for fast cloud inference by default. Falls back to a local Ollama model if Groq is unavailable. |
-| **Local embeddings** | Embeddings run through Ollama (`embeddinggemma:300m`, 768-dim) — free, offline-capable, no API rate limits during ingestion. |
+| **Gemini embeddings** | Embeddings run through Google's Gemini API (`gemini-embedding-001`, 768-dim) on the free tier, with request pacing and automatic retry/backoff to stay within rate limits during ingestion. |
 | **GitHub token support** | Optional `GITHUB_TOKEN` raises the GitHub API rate limit from 60 to 5,000 requests/hour for large repos. |
 | **Evaluation toolkit** | Scripts under `backend/eval/` measure retrieval hit rate, keyword recall, and refusal accuracy against a test dataset. |
 
@@ -30,7 +34,7 @@ Paste a repo URL, wait for ingestion, then chat. Answers stream in real time wit
 
 ## How it works
 
-1. **Ingest** — Paste a GitHub URL and click **Load docs**. The backend fetches doc files, chunks them, embeds each chunk with Ollama, and stores vectors in PostgreSQL (pgvector).
+1. **Ingest** — Paste a GitHub URL and click **Load docs**. The backend fetches doc files, chunks them, embeds each chunk with the Gemini API, and stores vectors in PostgreSQL (pgvector).
 2. **Retrieve** — Your question is embedded, condensed if it's a follow-up, then matched via hybrid search. Top candidates are optionally reranked by the LLM.
 3. **Answer** — Groq (or Ollama) generates a cited answer from the retrieved chunks. Citations map to collapsible source cards in the UI.
 
@@ -48,10 +52,10 @@ nginx (frontend) :5173
                                          │
                           ┌──────────────┼──────────────┐
                           ▼              ▼              ▼
-                    Ollama (host)   PostgreSQL      Groq (cloud)
-                    embeddinggemma  + pgvector     llama / gpt-oss
-                    :300m           vector(768)     free tier
-                    embed + fallback LLM
+                    Gemini (cloud)  PostgreSQL      Groq (cloud)
+                    gemini-         + pgvector     llama / gpt-oss
+                    embedding-001    vector(768)    free tier
+                    (768-dim)        embed          LLM
 ```
 
 ---
@@ -63,21 +67,10 @@ nginx (frontend) :5173
 Install these before running the stack:
 
 1. **[Docker Desktop](https://docs.docker.com/get-docker/)** (includes Docker Compose)
-2. **[Ollama](https://ollama.com)** — must be running on the host machine (not inside Docker)
-3. **Groq API key** — free at [console.groq.com](https://console.groq.com)
+2. **Google Gemini API key** — free at [ai.google.dev](https://ai.google.dev). Used for embeddings.
+3. **Groq API key** — free at [console.groq.com](https://console.groq.com). Used for LLM answers and reranking.
 4. **(Recommended) GitHub personal access token** — avoids the 60 req/hr unauthenticated API limit. Create one at GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic). No scopes required for public repos.
-
-Pull the embedding model once Ollama is installed:
-
-```bash
-ollama pull embeddinggemma:300m
-```
-
-If you plan to use the Ollama LLM fallback, also pull a chat model:
-
-```bash
-ollama pull llama3.1:8b
-```
+5. **(Optional) [Ollama](https://ollama.com)** — only needed if you want the local LLM fallback. Must run on the host machine (not inside Docker). Pull a chat model with `ollama pull llama3.1:8b`.
 
 ### Setup
 
@@ -91,6 +84,7 @@ cp .env.example .env
 Edit `.env` and set at minimum:
 
 ```env
+GOOGLE_API_KEY=your_gemini_key_here
 GROQ_API_KEY=gsk_your_key_here
 GITHUB_TOKEN=ghp_your_token_here   # recommended
 ```
@@ -123,7 +117,8 @@ docker compose down -v
 
 ### Docker notes
 
-- **Ollama runs on the host.** The backend container reaches it via `host.docker.internal:11434`. Make sure Ollama is running (`ollama serve`) before starting the stack.
+- **Embeddings use the Gemini API**, so the backend needs `GOOGLE_API_KEY` and outbound internet access. Ingestion is paced to respect the free-tier rate limit, so large repos take a few minutes.
+- **Ollama (optional) runs on the host.** Only required for the local LLM fallback; the backend container reaches it via `host.docker.internal:11434`.
 - **Migrations run automatically** on backend startup (`alembic upgrade head`).
 - **Data persists** in the `pgdata` Docker volume between restarts.
 
@@ -135,11 +130,12 @@ All settings live in `.env`. Key variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `GOOGLE_API_KEY` | — | Required for Gemini embeddings |
 | `GROQ_API_KEY` | — | Required for LLM answers and reranking |
 | `GROQ_LLM_MODEL` | `openai/gpt-oss-20b` | Groq model for generation and reranking |
 | `GITHUB_TOKEN` | — | GitHub PAT to avoid API rate limits |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint (overridden in Docker to `host.docker.internal`) |
-| `EMBEDDING_MODEL` | `embeddinggemma:300m` | Ollama embedding model |
+| `EMBEDDING_MODEL` | `gemini-embedding-001` | Google Gemini embedding model (768-dim) |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint for optional LLM fallback (overridden in Docker to `host.docker.internal`) |
 | `LLM_MODEL` | `llama3.1:8b` | Ollama fallback chat model |
 | `CHUNK_SIZE` | `1500` | Max characters per chunk |
 | `CHUNK_OVERLAP` | `200` | Overlap between consecutive chunks |
@@ -163,7 +159,7 @@ cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate  |  macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-cp ../.env.example ../.env   # set GROQ_API_KEY and GITHUB_TOKEN
+cp ../.env.example ../.env   # set GOOGLE_API_KEY, GROQ_API_KEY and GITHUB_TOKEN
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 
@@ -240,8 +236,9 @@ Metrics include retrieval hit rate, keyword recall in answers, and correct refus
 | Problem | Fix |
 | --- | --- |
 | `GitHub API rate limit reached` | Add `GITHUB_TOKEN` to `.env` and restart the backend |
-| `Cannot connect to Ollama` | Start Ollama on the host: `ollama serve`. In Docker, confirm `host.docker.internal` resolves (Docker Desktop on Windows/macOS handles this automatically) |
-| `Model not found in Ollama` | Pull the model: `ollama pull embeddinggemma:300m` |
+| `Gemini API check failed` on startup | Confirm `GOOGLE_API_KEY` is set and valid, and that the Generative Language API is enabled for the key |
+| Ingestion fails with `429` / rate limited | Gemini free-tier quota hit. Ingestion already retries with backoff; wait for the per-minute/daily quota to reset, or enable billing for higher limits |
+| `Cannot connect to Ollama` (LLM fallback only) | Start Ollama on the host: `ollama serve`. In Docker, confirm `host.docker.internal` resolves (Docker Desktop on Windows/macOS handles this automatically) |
 | Frontend loads but API calls fail | Check backend health at [http://localhost:8000/health](http://localhost:8000/health) |
 | Ingest finds no files | Repo may be private, empty, or contain no supported file types |
 | Low-quality or refused answers | Try rephrasing, lowering `CONFIDENCE_THRESHOLD`, or loading a repo with more relevant docs |
@@ -255,7 +252,7 @@ Metrics include retrieval hit rate, keyword recall in answers, and correct refus
 | **Frontend** | React 18, Vite, react-markdown |
 | **Backend** | FastAPI, SQLAlchemy 2 async, Alembic |
 | **Database** | PostgreSQL 16 + pgvector (HNSW index) + full-text search |
-| **Embeddings** | Ollama — embeddinggemma:300m (768-dim) |
+| **Embeddings** | Google Gemini — gemini-embedding-001 (768-dim) |
 | **LLM** | Groq (primary) / Ollama (fallback) |
 | **Serving** | nginx (SPA + reverse proxy) |
 | **Infra** | Docker Compose |
